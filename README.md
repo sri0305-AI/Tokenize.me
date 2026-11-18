@@ -98,3 +98,7 @@ token_counter_app/
 ```
 
 The built-in Flask server is for local development. Use a production WSGI server and disable debug mode before deploying the app publicly.
+
+
+Author
+Sri Priyanka S
