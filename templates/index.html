@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Tokenize.me – Know your tokens before you send</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=Public+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div class="mascot-wrap">
+        <img class="mascot" src="{{ url_for('static', filename='cat-mascot.png') }}" alt="Cat mascot">
+      </div>
+      <p class="brand"><span class="brand-word">Tokenize</span><span class="brand-badge">.me</span></p>
+      <h1>Know your tokens before you send</h1>
+    </header>
+    <blockquote class="quote">
+      <p>What gets measured gets managed.</p>
+    </blockquote>
+
+    <section class="settings" aria-label="Counting settings">
+      <label>
+        <span>Context window</span>
+        <select id="context-window">
+          <option value="8192">8K tokens</option>
+          <option value="32768">32K tokens</option>
+          <option value="128000">128K tokens</option>
+          <option value="200000">200K tokens</option>
+        </select>
+      </label>
+    </section>
+
+    <div class="mode-switch" role="group" aria-label="Choose counting mode">
+      <span class="mode-switch-indicator" aria-hidden="true"></span>
+      <button id="upload-tab" class="mode-button active" type="button" aria-pressed="true">Upload file</button>
+      <button id="paste-tab" class="mode-button" type="button" aria-pressed="false">Paste text</button>
+    </div>
+
+    <section id="upload-mode">
+      <label id="drop" class="drop" tabindex="0">
+        <input id="file" type="file" accept=".txt,.pdf,.docx" hidden>
+        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true" focusable="false">
+          <path d="M12 16V4"></path>
+          <path d="m7 9 5-5 5 5"></path>
+          <path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"></path>
+        </svg>
+        <span id="drop-text">Drop a file here or click to choose one</span>
+        <span class="drop-help">TXT, PDF or DOCX · 20 MB maximum</span>
+      </label>
+    </section>
+
+    <section id="paste-mode" hidden>
+      <label class="textarea-label" for="paste-text">Text to count</label>
+      <textarea id="paste-text" rows="8" placeholder="Paste or type your text here…"></textarea>
+      <p class="helper" id="paste-status" aria-live="polite">Counts update as you type.</p>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <section id="result" class="result" hidden aria-live="polite">
+      <p class="filename" id="r-name"></p>
+      <div class="token-counts">
+        <div>
+          <p class="big"><span id="r-total-tokens"></span></p>
+          <p class="metric-label">Total tokens</p>
+        </div>
+        <div>
+          <p class="big"><span id="r-unique-tokens"></span></p>
+          <p class="metric-label">Unique tokens</p>
+        </div>
+      </div>
+      <p class="repetition-ratio">
+        Repetition ratio: <strong id="r-repetition-ratio"></strong>
+        <span>A low percentage means the text repeats the same tokens a lot.</span>
+      </p>
+      <dl>
+        <div><dt>Words</dt><dd id="r-words"></dd></div>
+        <div><dt>Unique words</dt><dd id="r-unique-words"></dd></div>
+        <div><dt>Characters</dt><dd id="r-chars"></dd></div>
+      </dl>
+
+      <section class="estimate" aria-label="Cost and context estimate">
+        <div class="estimate-heading">
+          <h2>Cost estimate</h2>
+          <p id="cost-estimate"></p>
+        </div>
+        <p class="helper">Estimated using $2.50 per 1M tokens.</p>
+        <h2>Context window</h2>
+        <div class="progress-track" role="progressbar" aria-label="Context window used"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="context-progress" class="progress-fill"></div>
+        </div>
+        <p id="context-summary" class="helper"></p>
+        <p id="context-warning" class="warning" role="status" hidden></p>
+      </section>
+
+      <section class="visualizer-section" aria-label="Token visualizer">
+        <h2>Token visualizer</h2>
+        <p class="helper">Each colored segment represents one token.</p>
+        <p id="truncated-note" class="helper" hidden>
+          Showing only the first 5,000 tokens to keep the preview responsive.
+        </p>
+        <div id="visualizer" class="visualizer"></div>
+      </section>
+
+      <section class="top-tokens-section" aria-label="Top repeated tokens">
+        <h2>Top repeated tokens</h2>
+        <p class="helper">Whitespace-only tokens are excluded. Spaces attached to words remain part of those tokens.</p>
+        <div class="table-scroll">
+          <table class="top-token-table">
+            <thead>
+              <tr>
+                <th scope="col">Token</th>
+                <th scope="col">Token ID</th>
+                <th scope="col">Count</th>
+                <th scope="col">% of total</th>
+              </tr>
+            </thead>
+            <tbody id="top-tokens-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <p class="note">Files and pasted text are processed in memory and not stored.</p>
+  </main>
+
+  <script>
+    const drop = document.getElementById("drop");
+    const input = document.getElementById("file");
+    const dropText = document.getElementById("drop-text");
+    const errorEl = document.getElementById("error");
+    const resultEl = document.getElementById("result");
+    const uploadMode = document.getElementById("upload-mode");
+    const pasteMode = document.getElementById("paste-mode");
+    const pasteInput = document.getElementById("paste-text");
+    const pasteStatus = document.getElementById("paste-status");
+    const contextInput = document.getElementById("context-window");
+    const visualizer = document.getElementById("visualizer");
+    const progressTrack = document.querySelector(".progress-track");
+    const modeSwitch = document.querySelector(".mode-switch");
+    const PRICE_PER_MILLION_TOKENS = 2.5;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const fmt = number => number.toLocaleString();
+    let debounceTimer;
+    let requestNumber = 0;
+    let latestResult = null;
+    let tokenCountFrame = 0;
+
+    document.getElementById("upload-tab").addEventListener("click", () => setMode("upload"));
+    document.getElementById("paste-tab").addEventListener("click", () => setMode("paste"));
+
+    function setMode(mode) {
+      requestNumber += 1;
+      clearTimeout(debounceTimer);
+      const isPaste = mode === "paste";
+      uploadMode.hidden = isPaste;
+      pasteMode.hidden = !isPaste;
+      document.getElementById("upload-tab").classList.toggle("active", !isPaste);
+      document.getElementById("paste-tab").classList.toggle("active", isPaste);
+      document.getElementById("upload-tab").setAttribute("aria-pressed", String(!isPaste));
+      document.getElementById("paste-tab").setAttribute("aria-pressed", String(isPaste));
+      modeSwitch.classList.toggle("paste-active", isPaste);
+      resultEl.hidden = true;
+      errorEl.hidden = true;
+
+      if (isPaste && pasteInput.value.trim()) {
+        schedulePasteCount();
+      }
+    }
+
+    drop.addEventListener("dragover", event => {
+      event.preventDefault();
+      drop.classList.add("over");
+    });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", event => {
+      event.preventDefault();
+      drop.classList.remove("over");
+      if (event.dataTransfer.files.length) upload(event.dataTransfer.files[0]);
+    });
+    drop.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        input.click();
+      }
+    });
+    input.addEventListener("change", () => {
+      if (input.files.length) upload(input.files[0]);
+    });
+
+    async function upload(file) {
+      const thisRequest = ++requestNumber;
+      errorEl.hidden = true;
+      resultEl.hidden = true;
+      dropText.textContent = "Counting " + file.name + "…";
+
+      const body = new FormData();
+      body.append("file", file);
+
+      try {
+        const response = await fetch("/count", { method: "POST", body });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Something went wrong.");
+        if (thisRequest !== requestNumber) return;
+        showResult(data);
+      } catch (error) {
+        if (thisRequest === requestNumber) showError(error.message);
+      } finally {
+        if (thisRequest === requestNumber) {
+          dropText.textContent = "Drop another file or click to choose one";
+          input.value = "";
+        }
+      }
+    }
+
+    pasteInput.addEventListener("input", schedulePasteCount);
+
+    function schedulePasteCount() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(countPastedText, 300);
+    }
+
+    async function countPastedText() {
+      const thisRequest = ++requestNumber;
+      errorEl.hidden = true;
+      resultEl.hidden = true;
+      pasteStatus.textContent = "Counting…";
+
+      try {
+        const response = await fetch("/count-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: pasteInput.value
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Something went wrong.");
+        if (thisRequest !== requestNumber) return;
+        showResult(data);
+        pasteStatus.textContent = "Updated just now.";
+      } catch (error) {
+        if (thisRequest === requestNumber) {
+          pasteStatus.textContent = "";
+          showError(error.message);
+        }
+      }
+    }
+
+    function showError(message) {
+      errorEl.classList.remove("shake");
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+      if (!prefersReducedMotion) {
+        void errorEl.offsetWidth;
+        errorEl.classList.add("shake");
+      }
+    }
+
+    function showResult(data) {
+      latestResult = data;
+      document.getElementById("r-name").textContent = data.filename;
+      animateTotalTokenCount(data.total_tokens);
+      document.getElementById("r-unique-tokens").textContent = fmt(data.unique_tokens);
+      document.getElementById("r-repetition-ratio").textContent =
+        data.repetition_ratio.toFixed(1) + "%";
+      document.getElementById("r-words").textContent = fmt(data.words);
+      document.getElementById("r-unique-words").textContent = fmt(data.unique_words);
+      document.getElementById("r-chars").textContent = fmt(data.characters);
+
+      visualizer.replaceChildren();
+      data.token_strings.forEach((token, index) => {
+        if (token.trim() === "") {
+          visualizer.appendChild(document.createTextNode(token));
+          return;
+        }
+
+        const span = document.createElement("span");
+        span.className = index % 2 === 0 ? "token token-a" : "token token-b";
+        span.textContent = token;
+        visualizer.appendChild(span);
+      });
+
+      const topTokensBody = document.getElementById("top-tokens-body");
+      topTokensBody.replaceChildren();
+      data.top_tokens.forEach(token => {
+        const row = document.createElement("tr");
+        const tokenCell = document.createElement("td");
+        const idCell = document.createElement("td");
+        const countCell = document.createElement("td");
+        const percentCell = document.createElement("td");
+
+        tokenCell.textContent = showWhitespace(token.token);
+        idCell.textContent = fmt(token.id);
+        countCell.textContent = fmt(token.count);
+        percentCell.textContent = token.percent.toFixed(1) + "%";
+        row.append(tokenCell, idCell, countCell, percentCell);
+        topTokensBody.appendChild(row);
+      });
+
+      document.getElementById("truncated-note").hidden = !data.truncated;
+      resultEl.hidden = false;
+      updateEstimate(true);
+    }
+
+    function animateTotalTokenCount(totalTokens) {
+      const countElement = document.getElementById("r-total-tokens");
+      if (tokenCountFrame) cancelAnimationFrame(tokenCountFrame);
+
+      if (prefersReducedMotion) {
+        countElement.textContent = fmt(totalTokens);
+        return;
+      }
+
+      const duration = 800;
+      let startTime = null;
+
+      function updateCount(timestamp) {
+        if (startTime === null) startTime = timestamp;
+        const progress = Math.min((timestamp - startTime) / duration, 1);
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
+        countElement.textContent = fmt(Math.round(totalTokens * easedProgress));
+
+        if (progress < 1) {
+          tokenCountFrame = requestAnimationFrame(updateCount);
+        } else {
+          countElement.textContent = fmt(totalTokens);
+          tokenCountFrame = 0;
+        }
+      }
+
+      tokenCountFrame = requestAnimationFrame(updateCount);
+    }
+
+    function showWhitespace(token) {
+      return token
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "↵")
+        .replace(/\n/g, "↵")
+        .replace(/\t/g, "⇥")
+        .replace(/ /g, "·");
+    }
+
+    function updateEstimate(animateProgress = false) {
+      if (!latestResult) return;
+
+      const cost = latestResult.total_tokens * PRICE_PER_MILLION_TOKENS / 1000000;
+      document.getElementById("cost-estimate").textContent = "$" + cost.toFixed(6);
+
+      const contextLimit = Number(contextInput.value);
+      const percentage = latestResult.total_tokens / contextLimit * 100;
+      const shownPercentage = Math.min(percentage, 100);
+      const progressFill = document.getElementById("context-progress");
+      if (animateProgress && !prefersReducedMotion) {
+        progressFill.style.transition = "none";
+        progressFill.style.width = "0%";
+        void progressFill.offsetWidth;
+        progressFill.style.removeProperty("transition");
+      }
+      progressFill.style.width = shownPercentage + "%";
+      progressTrack.setAttribute("aria-valuenow", String(Math.round(shownPercentage)));
+      progressTrack.classList.toggle("over-limit", percentage > 100);
+      document.getElementById("context-summary").textContent =
+        fmt(latestResult.total_tokens) + " of " + fmt(contextLimit) +
+        " tokens (" + percentage.toFixed(1) + "%)";
+
+      const warning = document.getElementById("context-warning");
+      warning.hidden = percentage <= 100;
+      warning.textContent = percentage > 100
+        ? "This text exceeds the selected context window."
+        : "";
+    }
+
+    contextInput.addEventListener("change", () => updateEstimate());
+  </script>
+</body>
+</html>
